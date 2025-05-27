@@ -16,7 +16,7 @@ A Python automation bot for collecting data and red packets from betting website
 ## Requirements
 
 - Python 3.9+
-- Microsoft Edge WebDriver
+- Microsoft Chrome/Edge WebDriver
 - Dependencies listed in requirements.txt
 
 ## Configuration
