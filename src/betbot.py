@@ -1,7 +1,4 @@
-
-
-
-"""Main BetBot module for automated betting site interactions"""
+"""Main module of BetBot"""
 import os
 import re
 import time
@@ -11,8 +8,8 @@ import requests
 import tempfile
 from datetime import datetime
 from selenium import webdriver
-from selenium.webdriver.edge.service import Service
-from selenium.webdriver.edge.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import (
     TimeoutException,
@@ -32,7 +29,7 @@ from config import (
 from src.handlers.web_element_handler import WebElementHandler
 from src.utils.money_handler import MoneyHandler
 
-# Logging configuration
+# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -48,21 +45,20 @@ class BetBot:
         self.driver = None
         self.logger = logging.getLogger(__name__)
         self.element_handler = None
-        self.user_data_dir = None
 
-    def initialize_driver(self):
-        """Initializes Edge driver with appropriate settings"""
+    def start_driver(self):
+        """Initializes the Edge driver with the appropriate settings"""
         try:
-            self.user_data_dir = tempfile.mkdtemp()
+            user_data_dir = tempfile.mkdtemp()
             edge_options = Options()
-            edge_options.add_argument(f"--user-data-dir={self.user_data_dir}")
+            edge_options.add_argument(f"--user-data-dir={user_data_dir}")
             
             for key, value in BROWSER_CONFIG.items():
                 if value:
                     edge_options.add_argument(f"--{key.replace('_', '-')}")
             
-            service = Service("msedgedriver.exe")
-            self.driver = webdriver.Edge(service=service, options=edge_options)
+            service = Service("/usr/local/bin/chromedriver")
+            self.driver = webdriver.Chrome(service=service, options=edge_options)
             self.driver.implicitly_wait(TIMEOUTS["element_wait"])
             self.element_handler = WebElementHandler(self.driver, self.logger)
             self.logger.info("Driver configured successfully")
@@ -71,38 +67,33 @@ class BetBot:
             self.logger.error(f"Error configuring driver: {e}")
             return False
 
-    def _try_click(self, element, description="", use_js=False):
+    def try_click(self, element, description="", use_js=False):
         """Attempts to click an element with JavaScript fallback"""
-        return self.element_handler.click_element(element, description, use_js)
+        return self.element_handler.clicar_elemento(element, description, use_js)
 
-    def do_login(self, site):
-        """Performs login on a specific site
-        
-        Args:
-            site (dict): Site configuration containing url and credentials
-            
-        Returns:
-            bool: Whether login was successful
-        """
+    def login(self, site):
+        """Performs login on a specific site"""
         try:
             self.logger.info(f"Starting login at: {site['url']}")
             self.driver.get(site["url"])
-            time.sleep(1)
+            time.sleep(1)  # Small pause for the initial page to load
             
-            login_buttons = self.element_handler.find_elements(By.CSS_SELECTOR, SELECTORS["login_button"])
+            # First attempt: Find and click the login button
+            login_buttons = self.element_handler.encontrar_elementos(By.CSS_SELECTOR, SELECTORS["login_button"])
             button_found = False
             
             for button in login_buttons:
                 if button.is_displayed() and re.search(r"_btn_\w+_43", button.get_attribute("class")):
-                    if self.element_handler.click_element(button, "login button", try_scroll=False):
+                    if self.element_handler.clicar_elemento(button, "login button", tentar_scroll=False):
                         self.logger.info("Login button clicked successfully")
                         button_found = True
-                        time.sleep(1)
+                        time.sleep(1)  # Wait for the fields to appear
                         break
             
             if not button_found:
                 self.logger.info("Login button not found, checking if fields are already visible...")
-                fields_visible = self.element_handler.check_visibility(
+                # Checks if the fields are already visible even without clicking
+                fields_visible = self.element_handler.verificar_visibilidade(
                     By.CSS_SELECTOR, 
                     SELECTORS["username_field"],
                     timeout=2
@@ -111,28 +102,29 @@ class BetBot:
                     self.logger.error("Neither login button nor fields were found")
                     return False
 
-            if not self.element_handler.fill_field(
+            # Now tries to fill in the fields
+            if not self.element_handler.preencher_campo(
                 By.CSS_SELECTOR, 
                 SELECTORS["username_field"], 
                 site["username"]
             ):
                 raise Exception("Error filling username")
 
-            if not self.element_handler.fill_field(
+            if not self.element_handler.preencher_campo(
                 By.CSS_SELECTOR, 
                 SELECTORS["password_field"], 
                 site["password"]
             ):
                 raise Exception("Error filling password")
 
-            if not self.element_handler.wait_and_click(
+            if not self.element_handler.esperar_e_clicar(
                 By.CSS_SELECTOR, 
                 SELECTORS["submit_button"], 
                 "submit button"
             ):
                 raise Exception("Error clicking submit button")
             
-            time.sleep(1)
+            time.sleep(1)  # Wait for login processing
             return True
             
         except Exception as e:
@@ -140,7 +132,7 @@ class BetBot:
             return False
 
     def handle_popups(self):
-        """Manages different types of popups that may appear"""
+        """Handles different types of popups that may appear"""
         start_time = time.time()
         popups_closed = 0
         max_attempts = 3
@@ -152,22 +144,22 @@ class BetBot:
             for selector, description in POPUP_SELECTORS.items():
                 try:
                     by_type = By.XPATH if selector.startswith('//') else By.CSS_SELECTOR
-                    element = self.element_handler.wait_for_element_clickable(by_type, selector, timeout=3)
+                    element = self.element_handler.esperar_elemento_clicavel(by_type, selector, timeout=3)
                     
                     if not element:
                         continue
 
                     popup_found = True
-                    if self._try_click(element, description):
+                    if self.try_click(element, description):
                         popups_closed += 1
                         self.logger.info(f"{description} closed successfully")
-                    elif self._try_click(element, description, use_js=True):
+                    elif self.try_click(element, description, use_js=True):
                         popups_closed += 1
                         self.logger.info(f"{description} closed via JavaScript")
                     else:
-                        body = self.element_handler.find_elements(By.TAG_NAME, "body")
+                        body = self.element_handler.encontrar_elementos(By.TAG_NAME, "body")
                         if body:
-                            self._try_click(body[0], "page body")
+                            self.try_click(body[0], "page body")
                             self.logger.info("Attempted to close popup by clicking elsewhere")
                     
                     time.sleep(1)
@@ -187,7 +179,7 @@ class BetBot:
                 popup_still_visible = False
                 for selector in POPUP_SELECTORS:
                     by_type = By.XPATH if selector.startswith('//') else By.CSS_SELECTOR
-                    if self.element_handler.check_visibility(by_type, selector, timeout=1):
+                    if self.element_handler.verificar_visibilidade(by_type, selector, timeout=1):
                         popup_still_visible = True
                         break
                 if not popup_still_visible:
@@ -196,17 +188,13 @@ class BetBot:
         self.logger.info(f"Total of {popups_closed} popups closed")
 
     def collect_reward(self):
-        """Collects available reward
-        
-        Returns:
-            bool: Whether reward collection was successful
-        """
+        """Collects the available reward"""
         try:
             attempts = 3
             for attempt in range(attempts):
                 self.logger.info(f"Attempt {attempt + 1} to collect reward")
 
-                element = self.element_handler.wait_for_element_clickable(
+                element = self.element_handler.esperar_elemento_clicavel(
                     By.CSS_SELECTOR,
                     SELECTORS["main_button"],
                     timeout=5
@@ -215,10 +203,10 @@ class BetBot:
                 if not element:
                     continue
 
-                if self.element_handler.click_element(element, "main button"):
+                if self.element_handler.clicar_elemento(element, "main button"):
                     self.logger.info("Main button clicked successfully")
                     
-                    if self.element_handler.check_visibility(
+                    if self.element_handler.verificar_visibilidade(
                         By.CSS_SELECTOR,
                         SELECTORS["popup_block"],
                         timeout=2
@@ -227,7 +215,7 @@ class BetBot:
                         return False
 
                     try:
-                        prize = self.element_handler.wait_for_element_present(
+                        prize = self.element_handler.esperar_elemento_presente(
                             By.CSS_SELECTOR,
                             SELECTORS["prize_value"],
                             timeout=3
@@ -235,10 +223,11 @@ class BetBot:
                         if prize:
                             self.logger.info(f"Prize collected: {prize.text}")
                             return True
-                    except Exception as e:
-                        self.logger.debug(f"Could not capture prize value: {e}")
-                        self.logger.info("Package appears to have been collected successfully")
-                        return True
+                    except:
+                        pass
+
+                    self.logger.info("Package appears to have been collected successfully")
+                    return True
 
                 time.sleep(1)
 
@@ -250,13 +239,9 @@ class BetBot:
             return False
 
     def capture_value(self):
-        """Captures the current currency value
-        
-        Returns:
-            str: Formatted monetary value
-        """
+        """Captures the current currency value"""
         try:
-            element = self.element_handler.wait_for_element_present(
+            element = self.element_handler.esperar_elemento_presente(
                 By.XPATH,
                 SELECTORS["currency_value"],
                 timeout=10
@@ -286,31 +271,23 @@ class BetBot:
             return MoneyHandler.float_to_str(0)
 
     def save_value(self, url, value):
-        """Saves captured value to JSON file
-        
-        Args:
-            url (str): Site URL
-            value (str): Captured value
-            
-        Returns:
-            tuple: (bool: whether value changed, str: previous value)
-        """
-        filename = "valores_sites.json"
+        """Saves the captured value to a JSON file"""
+        file_name = "valores_sites.json"
         try:
             data = {"last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "sites": {}}
             
-            if os.path.exists(filename):
-                with open(filename, "r", encoding="utf-8") as f:
+            if os.path.exists(file_name):
+                with open(file_name, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     
-            previous_value = data["sites"].get(url, {}).get("value", None)
+            previous_value = data["sites"].get(url, {}).get("valor", None)
             changed = previous_value != value
             data["sites"][url] = {
-                "value": value,
+                "valor": value,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
-            with open(filename, "w", encoding="utf-8") as f:
+            with open(file_name, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
                 
             return changed, previous_value
@@ -319,11 +296,7 @@ class BetBot:
             return False, None
 
     def send_telegram(self, message):
-        """Sends message to Telegram channel
-        
-        Args:
-            message (str): Message to send
-        """
+        """Sends a message to the Telegram channel"""
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
@@ -349,7 +322,7 @@ class BetBot:
             try:
                 self.logger.info(f"Processing site: {site['url']}")
                 
-                if not self.do_login(site):
+                if not self.login(site):
                     raise Exception("Login failed")
                     
                 self.handle_popups()
@@ -374,7 +347,7 @@ class BetBot:
                 
         self.send_telegram(consolidated_message)
 
-    def execute(self):
+    def run(self):
         """Main method that executes the entire process"""
         print(Fore.CYAN + r"""
                       _        _           
@@ -396,7 +369,7 @@ class BetBot:
         """ + Style.RESET_ALL)
 
         try:
-            if not self.initialize_driver():
+            if not self.start_driver():
                 raise Exception("Failed to initialize driver")
                 
             self.process_sites()
@@ -407,10 +380,7 @@ class BetBot:
         finally:
             if self.driver:
                 self.driver.quit()
-            if self.user_data_dir and os.path.exists(self.user_data_dir):
-                import shutil
-                shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
 if __name__ == "__main__":
     bot = BetBot()
-    bot.execute()
+    bot.run()
